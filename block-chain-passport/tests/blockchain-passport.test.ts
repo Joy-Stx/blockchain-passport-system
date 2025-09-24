@@ -565,4 +565,449 @@ describe("Blockchain Passport System", () => {
       expect(extendResult.result).toBeErr(Cl.uint(4)); // err-not-found
     });
   });
+
+  describe("Passport Verification", () => {
+    it("should validate active passport as valid", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS014"),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8("John Doe, DOB: 1990-01-01"),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+
+      const { result } = simnet.callReadOnlyFn(
+        "blockchain-passport",
+        "is-valid-passport?",
+        [Cl.stringUtf8("PASS014")],
+        deployer
+      );
+      expect(result).toBeBool(true);
+    });
+
+    it("should validate revoked passport as invalid", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS015"),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8("John Doe, DOB: 1990-01-01"),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "revoke-passport",
+        [Cl.stringUtf8("PASS015")],
+        wallet1
+      );
+
+      const { result } = simnet.callReadOnlyFn(
+        "blockchain-passport",
+        "is-valid-passport?",
+        [Cl.stringUtf8("PASS015")],
+        deployer
+      );
+      expect(result).toBeBool(false);
+    });
+
+    it("should validate non-existent passport as invalid", () => {
+      const { result } = simnet.callReadOnlyFn(
+        "blockchain-passport",
+        "is-valid-passport?",
+        [Cl.stringUtf8("NONEXISTENT")],
+        deployer
+      );
+      expect(result).toBeBool(false);
+    });
+
+    it("should return none for non-existent passport lookup", () => {
+      const { result } = simnet.callReadOnlyFn(
+        "blockchain-passport",
+        "get-passport",
+        [Cl.stringUtf8("NONEXISTENT")],
+        deployer
+      );
+      expect(result).toBeNone();
+    });
+
+    it("should return none for holder without passport", () => {
+      const { result } = simnet.callReadOnlyFn(
+        "blockchain-passport",
+        "get-holder-passport",
+        [Cl.principal(wallet3)],
+        deployer
+      );
+      expect(result).toBeNone();
+    });
+
+    it("should verify passport status changes correctly", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS016"),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8("John Doe, DOB: 1990-01-01"),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+
+      const beforeRevoke = simnet.callReadOnlyFn(
+        "blockchain-passport",
+        "get-passport",
+        [Cl.stringUtf8("PASS016")],
+        deployer
+      );
+      expect(beforeRevoke.result).toBeSome(
+        Cl.tuple({
+          "holder": Cl.principal(wallet2),
+          "issue-date": Cl.uint(simnet.blockHeight),
+          "expiry-date": Cl.uint(1000000),
+          "metadata": Cl.stringUtf8("John Doe, DOB: 1990-01-01"),
+          "issuer": Cl.principal(wallet1),
+          "status": Cl.stringUtf8("active")
+        })
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "revoke-passport",
+        [Cl.stringUtf8("PASS016")],
+        wallet1
+      );
+
+      const afterRevoke = simnet.callReadOnlyFn(
+        "blockchain-passport",
+        "get-passport",
+        [Cl.stringUtf8("PASS016")],
+        deployer
+      );
+      expect(afterRevoke.result).toBeSome(
+        Cl.tuple({
+          "holder": Cl.principal(wallet2),
+          "issue-date": Cl.uint(simnet.blockHeight),
+          "expiry-date": Cl.uint(1000000),
+          "metadata": Cl.stringUtf8("John Doe, DOB: 1990-01-01"),
+          "issuer": Cl.principal(wallet1),
+          "status": Cl.stringUtf8("revoked")
+        })
+      );
+    });
+  });
+
+  describe("Edge Cases and Complex Scenarios", () => {
+    it("should handle maximum length passport ID", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      const maxLengthId = "A".repeat(20);
+      const { result } = simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8(maxLengthId),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8("John Doe, DOB: 1990-01-01"),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+      expect(result).toBeOk(Cl.stringUtf8(maxLengthId));
+    });
+
+    it("should handle maximum length metadata", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      const maxLengthMetadata = "A".repeat(500);
+      const { result } = simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS017"),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8(maxLengthMetadata),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+      expect(result).toBeOk(Cl.stringUtf8("PASS017"));
+    });
+
+    it("should handle maximum length authority name", () => {
+      const maxLengthName = "A".repeat(100);
+      const { result } = simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8(maxLengthName)],
+        deployer
+      );
+      expect(result).toBeOk(Cl.bool(true));
+    });
+
+    it("should handle multiple sequential operations on same passport", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS018"),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8("Initial metadata"),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+
+      const updateResult = simnet.callPublicFn(
+        "blockchain-passport",
+        "update-passport-metadata",
+        [Cl.stringUtf8("PASS018"), Cl.stringUtf8("Updated metadata")],
+        wallet1
+      );
+      expect(updateResult.result).toBeOk(Cl.bool(true));
+
+      const extendResult = simnet.callPublicFn(
+        "blockchain-passport",
+        "extend-passport-validity",
+        [Cl.stringUtf8("PASS018"), Cl.uint(2000000)],
+        wallet1
+      );
+      expect(extendResult.result).toBeOk(Cl.bool(true));
+
+      const revokeResult = simnet.callPublicFn(
+        "blockchain-passport",
+        "revoke-passport",
+        [Cl.stringUtf8("PASS018")],
+        wallet1
+      );
+      expect(revokeResult.result).toBeOk(Cl.bool(true));
+    });
+
+    it("should prevent operations on revoked passports", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS019"),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8("John Doe, DOB: 1990-01-01"),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "revoke-passport",
+        [Cl.stringUtf8("PASS019")],
+        wallet1
+      );
+
+      const updateResult = simnet.callPublicFn(
+        "blockchain-passport",
+        "update-passport-metadata",
+        [Cl.stringUtf8("PASS019"), Cl.stringUtf8("Should not work")],
+        wallet1
+      );
+      expect(updateResult.result).toBeOk(Cl.bool(true));
+
+      const extendResult = simnet.callPublicFn(
+        "blockchain-passport",
+        "extend-passport-validity",
+        [Cl.stringUtf8("PASS019"), Cl.uint(3000000)],
+        wallet1
+      );
+      expect(extendResult.result).toBeOk(Cl.bool(true));
+    });
+
+    it("should handle authority status changes correctly", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS020"),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8("John Doe, DOB: 1990-01-01"),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "remove-authority",
+        [Cl.principal(wallet1)],
+        deployer
+      );
+
+      const { result } = simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS021"),
+            "holder": Cl.principal(wallet3),
+            "metadata": Cl.stringUtf8("Jane Smith, DOB: 1995-03-10"),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+      expect(result).toBeErr(Cl.uint(1)); // err-unauthorized
+
+      const revokeResult = simnet.callPublicFn(
+        "blockchain-passport",
+        "revoke-passport",
+        [Cl.stringUtf8("PASS020")],
+        wallet1
+      );
+      expect(revokeResult.result).toBeOk(Cl.bool(true));
+    });
+
+    it("should handle zero and maximum uint values for expiry dates", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      const zeroExpiryResult = simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS022"),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8("Zero expiry test"),
+            "expiry-date": Cl.uint(0)
+          })
+        ],
+        wallet1
+      );
+      expect(zeroExpiryResult.result).toBeOk(Cl.stringUtf8("PASS022"));
+
+      const maxExpiryResult = simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS023"),
+            "holder": Cl.principal(wallet3),
+            "metadata": Cl.stringUtf8("Max expiry test"),
+            "expiry-date": Cl.uint(340282366920938463463374607431768211455) // u128 max
+          })
+        ],
+        wallet1
+      );
+      expect(maxExpiryResult.result).toBeOk(Cl.stringUtf8("PASS023"));
+    });
+
+    it("should handle empty metadata", () => {
+      simnet.callPublicFn(
+        "blockchain-passport",
+        "add-authority",
+        [Cl.principal(wallet1), Cl.stringUtf8("Government Authority")],
+        deployer
+      );
+
+      const { result } = simnet.callPublicFn(
+        "blockchain-passport",
+        "issue-passport",
+        [
+          Cl.tuple({
+            "passport-id": Cl.stringUtf8("PASS024"),
+            "holder": Cl.principal(wallet2),
+            "metadata": Cl.stringUtf8(""),
+            "expiry-date": Cl.uint(1000000)
+          })
+        ],
+        wallet1
+      );
+      expect(result).toBeOk(Cl.stringUtf8("PASS024"));
+
+      const updateResult = simnet.callPublicFn(
+        "blockchain-passport",
+        "update-passport-metadata",
+        [Cl.stringUtf8("PASS024"), Cl.stringUtf8("")],
+        wallet1
+      );
+      expect(updateResult.result).toBeOk(Cl.bool(true));
+    });
+  });
 });
